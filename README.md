@@ -27,6 +27,12 @@ variables as a way to override host name resolution. For example:
     56 bytes from 8.8.8.8: icmp_seq=0 ttl=54 time=38.129 ms
     56 bytes from 8.8.8.8: icmp_seq=1 ttl=54 time=36.581 ms
 
+You can also resolve kubernetes service names:
+
+    $ sudo docker -ti run destination/image:tag /bin/bash
+    root@abcdef:/# TEST_TWO_SERVICE_PORT=5353 getent services test-two
+    test-two           5353/tcp
+
 Your kubernetes manifests need to be updated to use the new image.
 
 ## Manual Details
@@ -41,8 +47,8 @@ Your kubernetes manifests need to be updated to use the new image.
 
 ## How it works
 
-During host name lookup, if a name has no dots, we look for an
+During host name or service lookup, if a name has no dots, we look for an
 environment variable with the host name in upper case, dashes converted
-to underscores, and suffixed with ```_SERVICE_HOST```. If the environment
-variable exists we parse it as an IPv4 or IPv6 address and return it to
-the resolver.
+to underscores, and suffixed with ```_SERVICE_HOST``` or ```_SERVICE_PORT```
+If the environment variable exists we parse it and return it to the glibc
+resolver.

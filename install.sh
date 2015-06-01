@@ -21,5 +21,5 @@ chown root:root $1
 chmod 755 $1
 cp --preserve $1 $DIR
 
-sed -i 's/hosts:\(\s\+\)files/hosts:\1kubernetes files/' /etc/nsswitch.conf
+sed -i -e 's/\(services\|hosts\):\(\s\+\)files/\1:\2kubernetes files/' /etc/nsswitch.conf
 

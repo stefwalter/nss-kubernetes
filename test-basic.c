@@ -84,6 +84,18 @@ dump_hostent (struct hostent *host)
 }
 
 static void
+dump_servent (struct servent *serv)
+{
+	int i;
+
+	printf ("servent = name: %s", serv->s_name);
+	for (i = 0; serv->s_aliases[i] != NULL; i++)
+		printf (", alias: %s", serv->s_aliases[i]);
+	printf (", port: %d", (int)ntohs (serv->s_port));
+	printf (", proto: %s\n", serv->s_proto);
+}
+
+static void
 dump_gairet (int ret)
 {
 	printf ("ret = %d strerror: %s\n", ret, gai_strerror (ret));
@@ -227,7 +239,7 @@ test_getaddrinfo_inet6_unspec (void)
 }
 
 static void
-test_no_environment (void)
+test_host_no_environment (void)
 {
 	struct addrinfo *res;
 	int ret;
@@ -245,7 +257,7 @@ test_no_environment (void)
 }
 
 static void
-test_dot_not_supported (void)
+test_host_dot_not_supported (void)
 {
 	struct addrinfo *res;
 	int ret;
@@ -263,7 +275,7 @@ test_dot_not_supported (void)
 }
 
 static void
-test_invalid_value (void)
+test_host_invalid_value (void)
 {
 	struct addrinfo *res;
 	int ret;
@@ -280,6 +292,83 @@ test_invalid_value (void)
 	assert (ret != 0);
 }
 
+static void
+test_getservbyname (void)
+{
+	struct servent *serv;
+
+	setenv ("OH_MARMALADE_SERVICE_PORT", "5835", 1);
+
+	serv = getservbyname ("oh-marmalade", "tcp");
+	assert (serv != NULL);
+	dump_servent (serv);
+	assert (strcmp (serv->s_name, "oh-marmalade") == 0);
+	assert (serv->s_aliases[0] == NULL);
+	assert (ntohs (serv->s_port) == 5835);
+	assert (strcmp (serv->s_proto, "tcp") == 0);
+}
+
+static void
+test_getservbyname_null (void)
+{
+	struct servent *serv;
+
+	setenv ("OH_MARMALADE_SERVICE_PORT", "5835", 1);
+
+	serv = getservbyname ("oh-marmalade", NULL);
+	assert (serv != NULL);
+	dump_servent (serv);
+	assert (strcmp (serv->s_name, "oh-marmalade") == 0);
+	assert (serv->s_aliases[0] == NULL);
+	assert (ntohs (serv->s_port) == 5835);
+	assert (strcmp (serv->s_proto, "tcp") == 0);
+}
+
+
+static void
+test_serv_no_environment (void)
+{
+	struct servent *serv;
+
+	unsetenv ("OH_MARMALADE_SERVICE_PORT");
+
+	serv = getservbyname ("oh-marmalade", "tcp");
+	assert (serv == NULL);
+}
+
+static void
+test_serv_dot_not_supported (void)
+{
+	struct servent *serv;
+
+	unsetenv ("OH.MARMALADE_SERVICE_PORT");
+
+	serv = getservbyname ("oh.marmalade", "tcp");
+	assert (serv == NULL);
+}
+
+static void
+test_serv_invalid_value (void)
+{
+	struct servent *serv;
+
+	setenv ("OH_MARMALADE_SERVICE_PORT", "abc", 1);
+
+	serv = getservbyname ("oh.marmalade", "tcp");
+	assert (serv == NULL);
+}
+
+static void
+test_serv_out_of_range (void)
+{
+	struct servent *serv;
+
+	setenv ("OH_MARMALADE_SERVICE_PORT", "555555", 1);
+
+	serv = getservbyname ("oh.marmalade", "tcp");
+	assert (serv == NULL);
+}
+
 #define test(x) do { \
 		fprintf (stderr, "TEST %s ...\n", #x); \
 		test_ ## x (); \
@@ -289,14 +378,24 @@ test_invalid_value (void)
 int
 main (void)
 {
-	test (dot_not_supported);
-	test (no_environment);
-	test (invalid_value);
+	test (host_dot_not_supported);
+	test (host_no_environment);
+	test (host_invalid_value);
+
 	test (gethostbyname);
 	test (gethostbyname_notfound);
 	test (getaddrinfo);
 	test (getaddrinfo_inet);
 	test (getaddrinfo_inet6);
 	test (getaddrinfo_inet6_unspec);
+
+	test (serv_dot_not_supported);
+	test (serv_no_environment);
+	test (serv_invalid_value);
+	test (serv_out_of_range);
+
+	test (getservbyname);
+	test (getservbyname_null);
+
 	return 0;
 }

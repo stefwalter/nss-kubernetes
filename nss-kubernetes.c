@@ -41,32 +41,24 @@
 #define ALIGN(a) (((a + sizeof(void*) - 1) / sizeof(void *)) * sizeof(void *))
 
 static enum nss_status
-lookup (const char *name,
-        int *af,
-        int *alen,
-        char *addr,
-        int *errnop,
-        int *h_errnop)
+lookup_env (const char *name,
+            const char *suffix,
+            const char **value,
+            int *errnop,
+            int *h_errnop)
 {
-	const char *value;
+	const char *val;
 	char *env;
 	int i;
-
-	if (*af != AF_UNSPEC && *af != AF_INET && *af != AF_INET6) {
-		*errnop = EAFNOSUPPORT;
-		*h_errnop = NO_DATA;
-		return NSS_STATUS_UNAVAIL;
-	}
 
 	/* Kube service names do not have dots (yet?) */
 	if (strchr (name, '.')) {
 		*errnop = errno;
-		*h_errnop = HOST_NOT_FOUND;
 		return NSS_STATUS_NOTFOUND;
 	}
 
 	/* Build the environment variable */
-	if (asprintf (&env, "%s_SERVICE_HOST", name) < 0) {
+	if (asprintf (&env, "%s_%s", name, suffix) < 0) {
 		*errnop = ENOMEM;
 		*h_errnop = NO_RECOVERY;
 		return NSS_STATUS_UNAVAIL;
@@ -74,20 +66,47 @@ lookup (const char *name,
 
 	/* Same as makeEnvVariableName() in envvars.go */
 	for (i = 0; env[i] != '\0'; i++) {
-		 if (env[i] == '-')
-			 env[i] = '_';
-		 else
-			 env[i] = toupper(env[i]);
+		if (env[i] == '-')
+			env[i] = '_';
+		else
+			env[i] = toupper(env[i]);
 	}
 
-	value = getenv (env);
+	val = getenv (env);
 	free (env);
 
 	/* No such environment variable */
-	if (!value) {
-		*errnop = errno;
-		*h_errnop = HOST_NOT_FOUND;
+	if (!val) {
+		*errnop = ENOENT;
 		return NSS_STATUS_NOTFOUND;
+	}
+
+	*value = val;
+	return NSS_STATUS_SUCCESS;
+}
+
+static enum nss_status
+lookup_host (const char *name,
+             int *af,
+             int *alen,
+             char *addr,
+             int *errnop,
+             int *h_errnop)
+{
+	enum nss_status ret;
+	const char *value;
+
+	if (*af != AF_UNSPEC && *af != AF_INET && *af != AF_INET6) {
+		*errnop = EAFNOSUPPORT;
+		*h_errnop = NO_DATA;
+		return NSS_STATUS_UNAVAIL;
+	}
+
+	ret = lookup_env (name, "SERVICE_HOST", &value, errnop, h_errnop);
+	if (ret != NSS_STATUS_SUCCESS) {
+		if (ret == NSS_STATUS_NOTFOUND)
+			*h_errnop = HOST_NOT_FOUND;
+		return ret;
 	}
 
 	/* Parse the value */
@@ -132,7 +151,7 @@ _nss_kubernetes_gethostbyname4_r (const char *name,
 	char addr[16];
 	char *end;
 
-	ret = lookup (name, &af, &alen, addr, errnop, h_errnop);
+	ret = lookup_host (name, &af, &alen, addr, errnop, h_errnop);
 	if (ret != NSS_STATUS_SUCCESS)
 		return ret;
 
@@ -185,7 +204,7 @@ _nss_kubernetes_gethostbyname3_r (const char *name,
 	char *addr0;
 	char *end;
 
-	ret = lookup (name, &af, &alen, addr, errnop, h_errnop);
+	ret = lookup_host (name, &af, &alen, addr, errnop, h_errnop);
 	if (ret != NSS_STATUS_SUCCESS)
 		return ret;
 
@@ -281,6 +300,85 @@ _nss_kubernetes_gethostbyaddr_r (const void *addr,
                                  size_t buflen,
                                  int *errnop,
                                  int *h_errnop)
+{
+	/* We don't support reverse lookups, sorry */
+	return NSS_STATUS_NOTFOUND;
+}
+
+enum nss_status
+_nss_kubernetes_getservbyname_r (const char *name,
+                                 const char *protocol,
+                                 struct servent *serv,
+                                 char *buffer,
+                                 size_t buflen,
+                                 int *errnop)
+{
+	enum nss_status ret;
+	const char *value;
+	unsigned long port;
+	size_t nlen, plen;
+	char *end;
+	int dummy;
+
+	/* It appears the kube service env variables only support TCP */
+	if (!protocol)
+		protocol = "tcp";
+
+	if (strcmp (protocol, "tcp") != 0) {
+		*errnop = EAFNOSUPPORT;
+		return NSS_STATUS_UNAVAIL;
+	}
+
+	ret = lookup_env (name, "SERVICE_PORT", &value, errnop, &dummy);
+	if (ret != NSS_STATUS_SUCCESS)
+		return ret;
+
+	end = NULL;
+	port = strtoul (value, &end, 10);
+	if (!end || end[0] != '\0' || port == 0 || port > 65535) {
+		*errnop = EINVAL;
+		return NSS_STATUS_UNAVAIL;
+	}
+
+	nlen = strlen (name);
+	plen = strlen (protocol);
+
+	end = buffer + ALIGN (nlen + 1) + sizeof (void *) + ALIGN (plen + 1);
+
+	/* Not enough buffer space */
+	if (buffer + buflen < end) {
+		*errnop = ENOMEM;
+		return NSS_STATUS_TRYAGAIN;
+	}
+
+	/* The name we resolved */
+	memcpy (buffer, name, nlen + 1);
+	serv->s_name = buffer;
+	buffer += ALIGN (nlen + 1);
+
+	/* The empty aliases array */
+	serv->s_aliases = (char **)buffer;
+	buffer += sizeof (void *);
+	serv->s_aliases[0] = NULL;
+
+	/* The port and protocol */
+	serv->s_port = htons (port);
+	memcpy (buffer, protocol, plen + 1);
+	serv->s_proto = buffer;
+	buffer += ALIGN (plen + 1);
+
+	assert (buffer == end);
+
+	return NSS_STATUS_SUCCESS;
+}
+
+enum nss_status
+_nss_kubernetes_getservbyport_r (const int port,
+                                 const char *protocol,
+                                 struct servent *serv,
+                                 char *buffer,
+                                 size_t buflen,
+                                 int *errnop)
 {
 	/* We don't support reverse lookups, sorry */
 	return NSS_STATUS_NOTFOUND;
