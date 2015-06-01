@@ -1,1 +1,5 @@
 *.so
+*.so.?
+test-basic
+*.gc??
+
