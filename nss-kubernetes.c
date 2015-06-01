@@ -35,6 +35,9 @@
 #include <stdio.h>
 #include <stdint.h>
 
+/* We use memmove instead of memcpy to avoid GLIBC_2.14 dependency */
+#define memcpy memmove
+
 #define ALIGN(a) (((a + sizeof(void*) - 1) / sizeof(void *)) * sizeof(void *))
 
 static enum nss_status
@@ -64,9 +67,9 @@ lookup (const char *name,
 
 	/* Build the environment variable */
 	if (asprintf (&env, "%s_SERVICE_HOST", name) < 0) {
-	*errnop = ENOMEM;
-	*h_errnop = NO_RECOVERY;
-	return NSS_STATUS_UNAVAIL;
+		*errnop = ENOMEM;
+		*h_errnop = NO_RECOVERY;
+		return NSS_STATUS_UNAVAIL;
 	}
 
 	/* Same as makeEnvVariableName() in envvars.go */
@@ -104,7 +107,6 @@ lookup (const char *name,
 	}
 
 	/* A parsing error */
-	fprintf (stderr, "alen %d\n", *alen);
 	if (*alen == 0) {
 		*errnop = EINVAL;
 		*h_errnop = NO_RECOVERY;
